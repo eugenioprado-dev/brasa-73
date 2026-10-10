@@ -115,7 +115,7 @@ try {
   await contrast('Featured description contrast', '.featured .card-body p', '.featured .product-card')
   await contrast('Featured price contrast', '.featured .card-bottom strong', '.featured .product-card')
   await contrast('Featured action contrast', '.featured .card-bottom button', '.featured .product-card')
-  await contrast('Illustration caption contrast', '.featured .image-caption', '.featured .is-illustration')
+  if (await evaluate('!!document.querySelector(".featured .image-caption")')) await contrast('Illustration caption contrast', '.featured .image-caption', '.featured .is-illustration')
   await contrast('Catalog description contrast', '.catalog .card-body p', '.catalog .product-card')
   await contrast('Active filter contrast', '.filters button[aria-pressed=true]', '.filters button[aria-pressed=true]')
   await check('All local images load', 'Array.from(document.images).every(i=>!i.complete || i.naturalWidth>0)')
@@ -154,6 +154,16 @@ try {
   await click('.cart-summary>.primary')
   await check('Structured demonstration message', 'document.querySelector("#order-message").value.replace(/\u00a0/g," ").includes("3x Brasa 73\\n- Bacon extra\\n- Cheddar extra\\nObs: sem cebola\\nR$ 121,20") && document.querySelector("#order-message").value.replace(/\u00a0/g," ").includes("Total: R$ 154,10") && !document.querySelector("a[href*=wa]")')
   await contrast('Order message contrast', '#order-message', '#order-message')
+  await check('Message exactly matches cart, including estimate', `(async()=>{
+    const {orderMessage}=await import('/src/utils/order.ts');
+    const {site,DELIVERY_ESTIMATE}=await import('/src/config/site.ts');
+    const items=JSON.parse(localStorage.getItem(site.storageKey));
+    const expected='Olá! Gostaria de fazer este pedido na BRASA 73:\\n\\n3x Brasa 73\\n- Bacon extra\\n- Cheddar extra\\nObs: sem cebola\\nR$ 121,20\\n\\n1x Brasa 73\\nR$ 32,90\\n\\n----------------\\nTotal: R$ 154,10\\n\\nTempo médio estimado de entrega: 35 a 50 minutos.';
+    return document.querySelector('#order-message').value===orderMessage(items)
+      && orderMessage(items).replace(/\\u00a0/g,' ')===expected
+      && document.querySelector('.delivery-estimate').textContent===DELIVERY_ESTIMATE
+      && document.querySelector('.cart-summary>small').textContent.includes('sem número');
+  })()`)
   await click('.order-review button')
   await check('Copy feedback', 'document.querySelector(".order-review [role=status]").textContent.length>0')
   await key('Escape'); await send('Page.reload'); await pause(500); await click('.order-button')
@@ -169,8 +179,15 @@ try {
   for (const width of [320,375,425,768,1024,1440]) {
     await viewport(width)
     await evaluate('window.scrollTo(0,0)')
-    await check(`Page fits ${width}px`, 'document.documentElement.scrollWidth<=innerWidth')
-    if ([375,1440].includes(width)) await screenshot(`home-${width}`)
+    await check(`Page fits ${width}px`, 'document.documentElement.scrollWidth<=document.documentElement.clientWidth')
+    await evaluate('document.querySelector(".hero img").decode()')
+    await check(`Hero photograph fits ${width}px`, `(() => {
+      const img=document.querySelector('.hero img'),r=img.getBoundingClientRect(),p=img.parentElement.getBoundingClientRect();
+      return img.src.includes('brasa-73') && img.naturalWidth>0 && getComputedStyle(img).objectFit==='contain'
+        && r.left>=0 && r.right<=innerWidth && r.top>=p.top && r.bottom<=p.bottom+1
+        && !document.querySelector('.hero .image-caption');
+    })()`)
+    await screenshot(`home-${width}`)
     await click('#cardapio .product-card button')
     await check(`Details fit ${width}px`, 'document.querySelector("dialog").scrollWidth<=document.querySelector("dialog").clientWidth')
     if (width===375) await screenshot('details-375')
@@ -197,8 +214,26 @@ try {
   await key('Escape')
   await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
   await check('Reduced motion disables transitions', 'getComputedStyle(document.querySelector(".button")).transitionDuration==="0s"')
+  await check('Reduced motion disables hero embers and glow', 'getComputedStyle(document.querySelector(".hero-embers")).display==="none" && getComputedStyle(document.querySelector(".hero-visual"),"::before").animationName==="none" && getComputedStyle(document.querySelector(".hero-embers span")).animationName==="none"')
   await check('Pure order helpers validate untrusted storage', `(async()=>{const m=await import('/src/utils/order.ts');const item={key:'test',productId:'brasa-73',quantity:2,note:'teste',extraIds:['bacon','cheddar']};return m.lineTotal(item)===8080 && m.restoreCart('null').length===0 && m.restoreCart(JSON.stringify([{...item,quantity:-1}])).length===0 && m.restoreCart(JSON.stringify([{...item,extraIds:['fake']}]))[0].extraIds.length===0})()`)
   await check('WhatsApp encodes the message only with configuration', `(async()=>{const m=await import('/src/utils/order.ts');const items=[{key:'test',productId:'brasa-73',quantity:1,note:'sem cebola & molho',extraIds:[]}];const url=m.whatsappUrl('0'.repeat(12),items);return m.whatsappUrl('',items)===null && new URL(url).searchParams.get('text')===m.orderMessage(items)})()`)
+  await check('Different products, extras and special characters match exact totals', `(async()=>{
+    const m=await import('/src/utils/order.ts');
+    const items=[{key:'a',productId:'bacon-melt',quantity:1,note:'Sem sal & molho à parte?',extraIds:['cheddar','meat','onion']},{key:'b',productId:'brasa-73',quantity:2,note:'',extraIds:[]}];
+    return m.lineTotal(items[0])===5140 && m.orderTotal(items)===11720
+      && m.orderMessage(items).replace(/\\u00a0/g,' ').includes('1x Bacon Melt\\n- Cheddar extra\\n- Carne extra\\n- Cebola caramelizada\\nObs: Sem sal & molho à parte?\\nR$ 51,40\\n\\n2x Brasa 73\\nR$ 65,80\\n\\n----------------\\nTotal: R$ 117,20')
+      && new URL(m.whatsappUrl('0'.repeat(12),items)).searchParams.get('text')===m.orderMessage(items);
+  })()`)
+  // Exercise the configured UI only in memory; never navigate to a placeholder number.
+  await evaluate(`(async()=>{const {site}=await import('/src/config/site.ts');site.whatsappNumber='0'.repeat(12)})()`)
+  await click('#cardapio .product-card button'); await click('.details-content>.primary'); await click('.order-button')
+  await check('Configured checkout links directly to encoded cart message', `(async()=>{
+    const {site}=await import('/src/config/site.ts'),{orderMessage}=await import('/src/utils/order.ts');
+    const link=document.querySelector('.cart-summary>a.primary');
+    return link?.target==='_blank' && new URL(link.href).searchParams.get('text')===orderMessage(JSON.parse(localStorage.getItem(site.storageKey)));
+  })()`)
+  await key('Escape')
+  await evaluate(`(async()=>{const {site}=await import('/src/config/site.ts');site.whatsappNumber=''})()`)
   await check('All five image formats and deterministic priority', `(async()=>{
     const {photoFor}=await import('/src/data/menu.ts');
     const formats=['avif','webp','jpg','jpeg','png'];

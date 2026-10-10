@@ -1,4 +1,5 @@
 import { menu } from '../data/menu';
+import { DELIVERY_ESTIMATE } from '../config/site';
 import type { CartItem } from '../types/menu';
 export const currency = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
 export const productFor = (item: CartItem) => menu.find(p => p.id === item.productId)!;
@@ -12,7 +13,7 @@ export const orderMessage = (items: CartItem[]) => `Olá! Gostaria de fazer este
     `${item.quantity}x ${productFor(item).name}`,
     ...extrasFor(item).map(e => `- ${e.name}`),
     ...(item.note ? [`Obs: ${item.note}`] : []), currency(lineTotal(item)),
-].join('\n')).join('\n\n')}\n\n----------------\nTotal: ${currency(orderTotal(items))}`;
+].join('\n')).join('\n\n')}\n\n----------------\nTotal: ${currency(orderTotal(items))}\n\n${DELIVERY_ESTIMATE}`;
 export function restoreCart(raw: string | null): CartItem[] {
     try {
         const value: unknown = JSON.parse(raw ?? '[]');
